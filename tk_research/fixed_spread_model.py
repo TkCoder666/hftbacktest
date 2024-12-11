@@ -14,15 +14,15 @@
 
 # %%
 
-# %%
 
-
-DEBUG = True
-
+DEBUG = False
+#! fixed_spread_trading strat
 import numpy as np
-
+from datetime import datetime, timedelta
 from numba import njit, uint64, float64
 from numba.typed import Dict
+import polars as pl
+import pandas as pd
 
 from hftbacktest import BUY, SELL, GTX, LIMIT
 
@@ -124,36 +124,37 @@ def fixed_spread_trading(hbt, recorder):
 
 # # %%
 from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest, Recorder
-# import hydra
-
-# @hydra.main(config_path='conf', config_name='config')
-# def asset_generate(cfg):
-#     asset = (
-#         BacktestAsset()
-#             .data([
-#                 'data/ETHUSDT_20221003.npz',
-#             ])
-#             .initial_snapshot('data/ETHUSDT_20221002_eod.npz')
-#             .linear_asset(1.0) 
-#             .constant_latency(10_000_000,20_000_000) # constant_latency 
-#             .partial_fill_exchange()#! no partial fill
-#             .trading_value_fee_model(0, 0.0007) #! 0 bps for maker, 7 bps for taker
-#             .tick_size(0.01)
-#             .lot_size(0.001)
-#             .roi_lb(0.0)    
-#             .roi_ub(3000.0)
-#     )
-#     if cfg["queue_model"] == "power_prob":
-#         asset.power_prob_queue_model(2.0) #!
    
+npz_dir = "/mnt/data/hftbacktest_data/data"
+
+from datetime import datetime, timedelta
+
+# 定义起始日期和结束日期
+begin_date = "20240320"
+end_date = "20240420"
+
+# 将日期字符串转换为 datetime 对象
+start = datetime.strptime(begin_date, "%Y%m%d")
+end = datetime.strptime(end_date, "%Y%m%d")
+
+# 生成日期列表
+date_list = []
+current_date = start
+while current_date <= end:
+    # 将日期格式化为字符串并添加到列表中
+    date_list.append(current_date.strftime("%Y%m%d"))
+    # 增加一天
+    current_date += timedelta(days=1)
+
+npz_file_list = []
+for date in date_list:
+    npz_file_list.append(f"{npz_dir}/ETHUSDT_{date}.npz")
     
 
 asset = (
     BacktestAsset()
-        .data([
-            'data/ETHUSDT_20221003.npz',
-        ])
-        .initial_snapshot('data/ETHUSDT_20221002_eod.npz')
+        .data(npz_file_list)
+        .initial_snapshot('/mnt/data/hftbacktest_data/eod_data/ETHUSDT_20240319_eod.npz')
         .linear_asset(1.0) 
         .constant_latency(10_000_000,20_000_000) # constant_latency 
         .power_prob_queue_model(2.0) #!
@@ -162,11 +163,11 @@ asset = (
         .tick_size(0.01)
         .lot_size(0.001)
         .roi_lb(0.0)    
-        .roi_ub(3000.0)
+        .roi_ub(4200)
 )
 hbt = ROIVectorMarketDepthBacktest([asset])
 
-recorder = Recorder(1, 5_000_000)
+recorder = Recorder(1, 60_000_000)
 
 # %%
 
@@ -211,7 +212,7 @@ for name in records.dtype.names:
 # add records['timestamp'] and records['price'] to out use np array method 
 
 
-selected_range = extract_time_range(merged_array, "20221003 07:00:00", "20221003 19:00:00")
+selected_range = merged_array
 
 # %%
 from hftbacktest.stats import LinearAssetRecord
@@ -221,9 +222,26 @@ stats.summary()
 # %%
 stats.plot()
 
+df = pd.DataFrame(selected_range)
+
+df.to_csv(f'report/fixed_spread_record_{begin_date}_{end_date}.csv')
+
+# import numpy as np
+# from hftbacktest.stats import LinearAssetRecord
+
+# asset0_record = np.load('backtest_result.npz')['0']
+# stats = (
+#     LinearAssetRecord(asset0_record)
+#         .resample('10s')
+#         .monthly()
+#         .stats(book_size=100000)
+# )
+# stats.summary()
+# stats.plot()
+        
 # save plot
 import matplotlib.pyplot as plt
-plt.savefig('stats/gridtrading_simple_hf_mm1_ETHUSDT.png')
+plt.savefig(f'report/fixed_spread_plot_{begin_date}_{end_date}.png')
 
 
 
