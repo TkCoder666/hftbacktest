@@ -147,6 +147,7 @@ def backtest(args):
     queue_params = args["queue_params"]
     data_dir = args["data_dir"]
     begin_date, end_date = args["begin_date"], args["end_date"]
+    fill_exchange = args["fill_exchange"]
     # Obtains the mid-price of the assset to determine the order quantity.
     start = datetime.strptime(begin_date, "%Y%m%d")
     prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
@@ -166,13 +167,16 @@ def backtest(args):
             .initial_snapshot(f'{data_dir}/{asset_name}_{prev_date}_eod.npz')
             .linear_asset(1.0) 
             .constant_latency(10_000_000,20_000_000) # constant_latency 
-            .no_partial_fill_exchange()
             .trading_value_fee_model(0, 0.0007)
             .tick_size(asset_info['tick_size'])
             .lot_size(asset_info['lot_size'])
             .roi_lb(0.0)    
             .roi_ub(7000)
     )
+    if fill_exchange == 'no_partial_fill_exchange':
+        asset.no_partial_fill_exchange()
+    elif fill_exchange == 'partial_fill_exchange':
+        asset.partial_fill_exchange()
 
     if queue_model == 'PowerProbQueueModel1':
         asset.power_prob_queue_model(queue_params)
