@@ -23,8 +23,9 @@ from numba import njit, uint64, float64
 from numba.typed import Dict
 import polars as pl
 import pandas as pd
-
+import time
 from hftbacktest import BUY, SELL, GTX, LIMIT
+
 
 out_dtype = np.dtype([
     ('cur_ts', '<i8'),
@@ -41,10 +42,14 @@ def fixed_spread_trading(hbt, recorder):
     asset_no = 0
     tick_size = hbt.depth(asset_no).tick_size
     half_spread = tick_size * 10
-    out = np.zeros(10_000_000, out_dtype)
+    # out = np.zeros(500_000_000, out_dtype)
     t = 0
-    # Running interval in nanoseconds.
+    # Running interval in nanoseconds.progress = 0
+    progress = 0
+    print('Start')
     while hbt.elapse(100_000_000) == 0:
+        progress += 100_000_000 / 1_000_000_000 / 60 / 60 
+        print('Progress:', progress, 'hours')
         # Clears cancelled, filled or expired orders.        
         hbt.clear_inactive_orders(asset_no)
         
@@ -103,13 +108,13 @@ def fixed_spread_trading(hbt, recorder):
             if order_id not in orders:
                 hbt.submit_sell_order(asset_no, order_id, order_price, order_qty, GTX, LIMIT, False)
         
-        out[t].cur_ts = cur_ts
-        out[t].exch_ts = exch_ts
-        out[t].local_ts = local_ts
-        out[t].mid = mid_price
-        out[t].half_spread_tick = half_spread / tick_size
-        out[t].bid_price = bid_price
-        out[t].ask_price = ask_price # 
+        # out[t].cur_ts = cur_ts
+        # out[t].exch_ts = exch_ts
+        # out[t].local_ts = local_ts
+        # out[t].mid = mid_price
+        # out[t].half_spread_tick = half_spread / tick_size
+        # out[t].bid_price = bid_price
+        # out[t].ask_price = ask_price # 
         
         t += 1
         # Records the current state for stat calculation.
@@ -117,13 +122,13 @@ def fixed_spread_trading(hbt, recorder):
         
         if DEBUG and t >= 100:
             break
-    return out[:t]
+    # return out[:t]
 
 # %% [markdown]
 # For generating order latency from the feed data file, which uses feed latency as order latency, please see [Order Latency Data](https://hftbacktest.readthedocs.io/en/latest/tutorials/Order%20Latency%20Data.html).
 
 # # %%
-from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest, Recorder
+from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest, Recorder,HashMapMarketDepthBacktest
    
 npz_dir = "/mnt/data/hftbacktest_data/data"
 
@@ -131,50 +136,72 @@ from datetime import datetime, timedelta
 
 # 定义起始日期和结束日期
 begin_date = "20240320"
-end_date = "20240420"
+end_date = "20240401"
 
 # 将日期字符串转换为 datetime 对象
 start = datetime.strptime(begin_date, "%Y%m%d")
 end = datetime.strptime(end_date, "%Y%m%d")
 
-# 生成日期列表
-date_list = []
-current_date = start
-while current_date <= end:
-    # 将日期格式化为字符串并添加到列表中
-    date_list.append(current_date.strftime("%Y%m%d"))
-    # 增加一天
-    current_date += timedelta(days=1)
+def backtest(args):
+    asset_name, asset_info, queue_model = args["asset_name"], args["asset_info"], args["queue_model"]
+    queue_params = args["queue_params"]
+    data_dir = args["data_dir"]
+    begin_date, end_date = args["begin_date"], args["end_date"]
+    # Obtains the mid-price of the assset to determine the order quantity.
+    start = datetime.strptime(begin_date, "%Y%m%d")
+    prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
+    end = datetime.strptime(end_date, "%Y%m%d")
 
-npz_file_list = []
-for date in date_list:
-    npz_file_list.append(f"{npz_dir}/ETHUSDT_{date}.npz")
+    # 生成日期列表
+    date_list = []
+    current_date = start
+    while current_date <= end:
+        # 将日期格式化为字符串并添加到列表中
+        date_list.append(current_date.strftime("%Y%m%d"))
+        # 增加一天
+        current_date += timedelta(days=1)
+    asset = (
+        BacktestAsset()
+            .data([f'{data_dir}/{asset_name}_{date}.npz' for date in date_list])
+            .initial_snapshot(f'{data_dir}/{asset_name}_{prev_date}_eod.npz')
+            .linear_asset(1.0) 
+            .constant_latency(10_000_000,20_000_000) # constant_latency 
+            .no_partial_fill_exchange()
+            .trading_value_fee_model(0, 0.0007)
+            .tick_size(asset_info['tick_size'])
+            .lot_size(asset_info['lot_size'])
+            .roi_lb(0.0)    
+            .roi_ub(7000)
+    )
+
+    if queue_model == 'PowerProbQueueModel1':
+        asset.power_prob_queue_model(queue_params)
+    elif queue_model == 'PowerProbQueueModel2':
+        asset.power_prob_queue_model2(queue_params)
+    elif queue_model == 'PowerProbQueueModel3':
+        asset.power_prob_queue_model3(queue_params) # pay attention to the parameter
+    elif queue_model == 'LogProbQueueModel':
+        asset.log_prob_queue_model()
+    elif queue_model == 'LogProbQueueModel2':
+        asset.log_prob_queue_model2()
+    elif queue_model == 'RiskAdverseQueueModel': #risk_adverse_queue_model
+        asset.risk_adverse_queue_model()
+
+
+    hbt = ROIVectorMarketDepthBacktest([asset])
+
+    recorder = Recorder(1, 30_000_000)
+    
+    
+    fixed_spread_trading(hbt, recorder.recorder) #TODO:add strat name for multiple strats
+
+    hbt.close()
+
+    recorder.to_npz(f'stats/fixed_spread_strat_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
     
 
-asset = (
-    BacktestAsset()
-        .data(npz_file_list)
-        .initial_snapshot('/mnt/data/hftbacktest_data/eod_data/ETHUSDT_20240319_eod.npz')
-        .linear_asset(1.0) 
-        .constant_latency(10_000_000,20_000_000) # constant_latency 
-        .power_prob_queue_model(2.0) #!
-        .partial_fill_exchange()#! no partial fill
-        .trading_value_fee_model(0, 0.0007) #! 0 bps for maker, 7 bps for taker
-        .tick_size(0.01)
-        .lot_size(0.001)
-        .roi_lb(0.0)    
-        .roi_ub(4200)
-)
-hbt = ROIVectorMarketDepthBacktest([asset])
-
-recorder = Recorder(1, 60_000_000)
-
-# %%
-
-out = fixed_spread_trading(hbt, recorder.recorder)
-
-hbt.close()
-
+    
+exit(0)
 # %%
 import numpy as np
 from datetime import datetime, timedelta
@@ -224,7 +251,7 @@ stats.plot()
 
 df = pd.DataFrame(selected_range)
 
-df.to_csv(f'report/fixed_spread_record_{begin_date}_{end_date}.csv')
+df.to_csv(f'report/partial/fixed_spread_record_{begin_date}_{end_date}.csv')
 
 # import numpy as np
 # from hftbacktest.stats import LinearAssetRecord
@@ -241,7 +268,7 @@ df.to_csv(f'report/fixed_spread_record_{begin_date}_{end_date}.csv')
         
 # save plot
 import matplotlib.pyplot as plt
-plt.savefig(f'report/fixed_spread_plot_{begin_date}_{end_date}.png')
+plt.savefig(f'report/partial/fixed_spread_plot_{begin_date}_{end_date}.png')
 
 
 
