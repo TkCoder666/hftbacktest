@@ -87,7 +87,7 @@ def fixed_spread_trading(hbt, recorder):
         # order price in tick is used as order id.
         new_ask_orders[uint64(ask_price_tick)] = ask_price
                 
-        order_values = orders.values();
+        order_values = orders.values()
         while order_values.has_next():
             order = order_values.get()
             # Cancels if a working order is not in the new grid.
@@ -130,24 +130,15 @@ def fixed_spread_trading(hbt, recorder):
 # # %%
 from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest, Recorder,HashMapMarketDepthBacktest
    
-npz_dir = "/mnt/data/hftbacktest_data/data"
-
 from datetime import datetime, timedelta
 
-# 定义起始日期和结束日期
-begin_date = "20240320"
-end_date = "20240401"
-
-# 将日期字符串转换为 datetime 对象
-start = datetime.strptime(begin_date, "%Y%m%d")
-end = datetime.strptime(end_date, "%Y%m%d")
-
 def backtest(args):
-    asset_name, asset_info, queue_model = args["asset_name"], args["asset_info"], args["queue_model"]
+    asset_name, asset_info= args["asset_name"], args["asset_info"]
+    fill_exchange = args["fill_exchange"]
+    begin_date, end_date = args["begin_date"], args["end_date"]
+    queue_model = args["queue_model"]
     queue_params = args["queue_params"]
     data_dir = args["data_dir"]
-    begin_date, end_date = args["begin_date"], args["end_date"]
-    fill_exchange = args["fill_exchange"]
     # Obtains the mid-price of the assset to determine the order quantity.
     start = datetime.strptime(begin_date, "%Y%m%d")
     prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
@@ -173,9 +164,9 @@ def backtest(args):
             .roi_lb(0.0)    
             .roi_ub(7000)
     )
-    if fill_exchange == 'no_partial_fill_exchange':
+    if fill_exchange == 'no_partial':
         asset.no_partial_fill_exchange()
-    elif fill_exchange == 'partial_fill_exchange':
+    elif fill_exchange == 'partial_fill':
         asset.partial_fill_exchange()
 
     if queue_model == 'PowerProbQueueModel1':
@@ -201,8 +192,47 @@ def backtest(args):
 
     hbt.close()
 
-    recorder.to_npz(f'stats/fixed_spread_strat_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
-    
+    recorder.to_npz(f'stats/fixed_spread_strat_{fill_exchange}_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
+
+
+
+
+
+basic_args= {
+    "asset_name": "ETHUSDT",
+    "asset_info": {
+        "tick_size": 0.01,
+        "lot_size": 0.001
+    },
+    "fill_exchange": "no_partial",
+    "begin_date": "20240320",
+    "end_date": "20240401",
+    "data_dir": "/mnt/data/hftbacktest_data/data",
+}
+
+args_list = []
+
+no_param_queue_models = ['LogProbQueueModel', 'LogProbQueueModel2', 'RiskAdverseQueueModel']
+
+for queue_model in no_param_queue_models:
+    args = basic_args.copy()
+    args["queue_model"] = queue_model
+    args["queue_params"] = None
+    args_list.append(args)
+
+has_param_queue_models = ['PowerProbQueueModel1', 'PowerProbQueueModel2', 'PowerProbQueueModel3']
+param_list = [2,3,9,20]
+for queue_model in has_param_queue_models:
+    for queue_params in param_list:
+        args = basic_args.copy()
+        args["queue_model"] = queue_model
+        args["queue_params"] = queue_params
+        args_list.append(args)
+
+from multiprocessing import Pool
+
+with Pool(16) as p:
+    p.map(backtest, args_list)
 
     
 exit(0)
