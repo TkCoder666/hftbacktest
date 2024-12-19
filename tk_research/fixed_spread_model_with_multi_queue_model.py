@@ -139,6 +139,7 @@ def backtest(args):
     queue_model = args["queue_model"]
     queue_params = args["queue_params"]
     data_dir = args["data_dir"]
+    out_dir = args["out_dir"]
     # Obtains the mid-price of the assset to determine the order quantity.
     start = datetime.strptime(begin_date, "%Y%m%d")
     prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
@@ -192,7 +193,7 @@ def backtest(args):
 
     hbt.close()
 
-    recorder.to_npz(f'stats/fixed_spread_strat_{fill_exchange}_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
+    recorder.to_npz(f'{out_dir}/fixed_spread_strat_{fill_exchange}_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
 
 
 
@@ -206,8 +207,9 @@ basic_args= {
     },
     "fill_exchange": "no_partial",
     "begin_date": "20240320",
-    "end_date": "20240401",
+    "end_date": "20240420",
     "data_dir": "/mnt/data/hftbacktest_data/data",
+    "out_dir": "report"
 }
 
 args_list = []
@@ -231,7 +233,7 @@ for queue_model in has_param_queue_models:
 
 from multiprocessing import Pool
 
-with Pool(16) as p:
+with Pool(3) as p:
     p.map(backtest, args_list)
 
     
