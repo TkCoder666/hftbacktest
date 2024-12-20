@@ -131,6 +131,7 @@ def fixed_spread_trading(hbt, recorder):
 from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest, Recorder,HashMapMarketDepthBacktest
    
 from datetime import datetime, timedelta
+import os
 
 def backtest(args):
     asset_name, asset_info= args["asset_name"], args["asset_info"]
@@ -144,7 +145,10 @@ def backtest(args):
     start = datetime.strptime(begin_date, "%Y%m%d")
     prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
     end = datetime.strptime(end_date, "%Y%m%d")
-
+    out_path = f'{out_dir}/fixed_spread_strat_{fill_exchange}_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz'
+    if os.path.exists(out_path):
+        print(f'{out_path} already exists')
+        return
     # 生成日期列表
     date_list = []
     current_date = start
@@ -193,12 +197,12 @@ def backtest(args):
 
     hbt.close()
 
-    recorder.to_npz(f'{out_dir}/fixed_spread_strat_{fill_exchange}_{asset_name}_{queue_model}_{queue_params}_{begin_date}_{end_date}.npz')
+    recorder.to_npz(out_path)
 
 
 
 
-
+n_jobs = 1
 basic_args= {
     "asset_name": "ETHUSDT",
     "asset_info": {
@@ -233,11 +237,16 @@ for queue_model in has_param_queue_models:
 
 from multiprocessing import Pool
 
-with Pool(3) as p:
+with Pool(n_jobs) as p:
     p.map(backtest, args_list)
 
-    
-exit(0)
+out_name_list = []
+for arg in args_list:
+    out_name_list.append(f'fixed_spread_strat_{arg["fill_exchange"]}_{arg["asset_name"]}_{arg["queue_model"]}_{arg["queue_params"]}_{arg["begin_date"]}_{arg["end_date"]}.npz')
+
+import polars as pl
+from matplotlib import pyplot as plt
+
 # %%
 import numpy as np
 from datetime import datetime, timedelta
@@ -256,55 +265,53 @@ def extract_time_range(arr, start_time_str, end_time_str):
     
     return filtered_arr
 
-# %%
-records = recorder.get(0)
-
-merged_field_names = list(out.dtype.names) + list(records.dtype.names)
-merged_field_dtypes = list(out.dtype.descr) + list(records.dtype.descr)
-
-# 创建合并后的结构化数组
-merged_array = np.zeros(len(out), dtype=merged_field_dtypes)
-
-# 填充数据
-for name in out.dtype.names:
-    merged_array[name] = out[name]
-for name in records.dtype.names:
-    merged_array[name] = records[name]
 
 
-# add records['timestamp'] and records['price'] to out use np array method 
-
-
-selected_range = merged_array
-
-# %%
+import polars as pl
+from matplotlib import pyplot as plt
 from hftbacktest.stats import LinearAssetRecord
-stats = LinearAssetRecord(selected_range).stats(book_size=10_000)
 
-stats.summary()
-# %%
-stats.plot()
+def compute_net_equity(out_path):
+    equity_values = {}
+    sr_values = {}
+    data = np.load(out_path)['0']
+    stats = (
+        LinearAssetRecord(data)
+            .resample('5m')
+            .stats()
+    )
 
-df = pd.DataFrame(selected_range)
+    equity = stats.entire.with_columns(
+        (pl.col('equity_wo_fee') - pl.col('fee')).alias('equity')
+    ).select(['timestamp', 'equity'])
 
-df.to_csv(f'report/partial/fixed_spread_record_{begin_date}_{end_date}.csv')
-
-# import numpy as np
-# from hftbacktest.stats import LinearAssetRecord
-
-# asset0_record = np.load('backtest_result.npz')['0']
-# stats = (
-#     LinearAssetRecord(asset0_record)
-#         .resample('10s')
-#         .monthly()
-#         .stats(book_size=100000)
-# )
-# stats.summary()
-# stats.plot()
-        
-# save plot
-import matplotlib.pyplot as plt
-plt.savefig(f'report/partial/fixed_spread_plot_{begin_date}_{end_date}.png')
+    return equity
 
 
 
+np.seterr(divide='ignore', invalid='ignore')
+
+fig = plt.figure()
+fig.set_size_inches(10, 3)
+legend = []
+out_dir = basic_args['out_dir']
+for out_name in out_name_list:
+    out_path = f'{out_dir}/{out_name}'
+    expt_name = out_name.split('.')[0]
+    net_equity_ = compute_net_equity(out_path)
+
+    pnl = net_equity_['equity'].diff()
+    # Since the P&L is resampled at a 5-minute interval
+    sr = pnl.mean() / pnl.std() * np.sqrt(24 * 60 / 5)
+    legend.append('100 assets, Daily SR={:.2f}, {}'.format(sr, expt_name))
+    plt.plot(net_equity_['timestamp'], net_equity_['equity'] * 100)
+    
+plt.legend(
+    legend,
+    loc='upper center', bbox_to_anchor=(0.5, -0.15),
+    fancybox=True, shadow=True, ncol=3
+)
+
+plt.grid()
+plt.ylabel('Cumulative Returns (%)')
+plt.savefig(f'{out_dir}/fixed_spread_strat.png', bbox_inches='tight')
