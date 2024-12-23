@@ -68,13 +68,13 @@ def linear_regression(x, y):
 
 
 
-# @njit
+@njit
 def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
     asset_no = 0
     tick_size = hbt.depth(asset_no).tick_size
 
-    arrival_depth = np.full(30_000_000, np.nan, np.float64)
-    mid_price_chg = np.full(30_000_000, np.nan, np.float64)
+    arrival_depth = np.full(700_000_000, np.nan, np.float64)
+    mid_price_chg = np.full(700_000_000, np.nan, np.float64)
 
     t = 0
     prev_mid_price_tick = np.nan
@@ -222,36 +222,61 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
 
         # Records the current state for stat calculation.
         recorder.record(hbt)
+        
+        
 
 from hftbacktest.stats import LinearAssetRecord
-
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
 if __name__ == '__main__':
     # This backtest assumes market maker rebates.
     # https://www.binance.com/en/support/announcement/binance-upgrades-usd%E2%93%A2-margined-futures-liquidity-provider-program-2023-04-04-01007356e6514df3811b0c80ab8c83bf
-    asset_name = "btcusdt"
+    asset_name = "ETHUSDT"
+    begin_date =  "20240320"
+    end_date =  "20240604"
+    data_dir =  "/mnt/data/hftbacktest_data/data"
+    out_dir =  "report"
+    start = datetime.strptime(begin_date, "%Y%m%d")
+    prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
+    end = datetime.strptime(end_date, "%Y%m%d")
+    # 生成日期列表
+    date_list = []
+    current_date = start
+    while current_date <= end:
+        # 将日期格式化为字符串并添加到列表中
+        date_list.append(current_date.strftime("%Y%m%d"))
+        # 增加一天
+        current_date += timedelta(days=1)
     asset = (
         BacktestAsset()
-            .data([
-                'data/btcusdt_20240730.npz',
-            ])
+            .data(
+                [f'{data_dir}/{asset_name}_{date}.npz' for date in date_list])
             .linear_asset(1.0)
-            .constant_latency(10_000_000, 10_000_000)
-            .power_prob_queue_model(2.0)
+            .constant_latency(10_000_000,20_000_000)
+            .risk_adverse_queue_model()
             .no_partial_fill_exchange()
-
-            .tick_size(0.1)
+            .trading_value_fee_model(-0.00005, 0.0007)
+            .tick_size(0.01)
             .lot_size(0.001)
+            .roi_lb(0.0)    
+            .roi_ub(7000.0)
+            .last_trades_capacity(10000)
     )
-    hbt = HashMapMarketDepthBacktest([asset])
+    print("Start backtest.")
     t1 = time.time()
-    recorder = Recorder(1, 30_000_000)
-    gamma = 0.00005
-    order_qty = 0.001
-    gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
-    hbt.close()
-    # recorder.to_npz('stats/gridtrading_simple_glft_mm1_{}.npz'.format(asset_name))
-    stats = LinearAssetRecord(recorder.get(0)).stats(book_size=10_000)
-    print(stats.summary())
-    t2 = time.time()
-    print(f"Elapsed time: {t2 - t1:.2f} seconds for the backtest.")
+    gamma_list = [0.0005, 0.001 , 0.005, 0.01, 0.05, 0.1, 0.5, 1 , 5, 10]
+    for gamma in gamma_list:
+        order_qty = 0.001
+        recorder = Recorder(1, 700_000_000)
+        hbt = ROIVectorMarketDepthBacktest([asset])
+        gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
+        hbt.close()
+        t2 = time.time()
+        print(f"Elapsed time: {t2 - t1:.2f} seconds for the backtest.")
+        recorder.to_npz(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{begin_date}_{end_date}.npz')
+        stats = LinearAssetRecord(recorder.get(0)).stats()
+        print(stats.summary())
+        stats.plot()
+        plt.savefig(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{begin_date}_{end_date}.png')
+        
