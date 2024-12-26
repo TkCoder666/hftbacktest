@@ -165,7 +165,19 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
 
         bid_price = np.floor(bid_price / grid_interval) * grid_interval
         ask_price = np.ceil(ask_price / grid_interval) * grid_interval
-
+        # calc usd value before placing orders
+        ask_usd_barrier = 0
+        for tick_price in range(depth.best_ask_tick, ask_price_tick):
+            qty = depth.ask_qty_at_tick(tick_price)
+            if qty > 0:
+                ask_usd_barrier += qty * tick_price * tick_size
+        
+        bid_usd_barrier = 0
+        for tick_price in range(depth.best_bid_tick, max(bid_price_tick,0),-1):
+            qty = depth.bid_qty_at_tick(tick_price)
+            if qty > 0:
+                bid_usd_barrier += qty * tick_price * tick_size
+            
         #--------------------------------------------------------
         # Updates quotes.
 
@@ -265,7 +277,7 @@ if __name__ == '__main__':
     )
     print("Start backtest.")
     t1 = time.time()
-    gamma_list = [0.0005, 0.001 , 0.005, 0.01, 0.05, 0.1, 0.5, 1 , 5, 10]
+    gamma_list = [0.5, 1, 5]
     for gamma in gamma_list:
         order_qty = 0.001
         recorder = Recorder(1, 700_000_000)
