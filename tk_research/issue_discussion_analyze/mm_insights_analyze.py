@@ -44,5 +44,5 @@ for chat_dict in tqdm(merged_discussions):
              "title": chat_dict['title'],
              "mm insights": reply
         })
-with open(f'{analyzed_dir}/mm_insights.json', 'w') as f:
-    json.dump(target_content, f, indent=4)
+with open(f'{analyzed_dir}/mm_insights.json', 'w', encoding="utf-8") as f:
+    json.dump(target_content, f, ensure_ascii=False, indent=4)
