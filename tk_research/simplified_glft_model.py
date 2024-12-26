@@ -67,12 +67,22 @@ def linear_regression(x, y):
     return slope, intercept
 
 
+out_dtype = np.dtype([
+    ('cur_ts', '<i8'),
+    ('mid', 'f8'),
+    ('half_spread_tick', 'f8'),
+    ('bp0', 'f8'),
+    ('ap0', 'f8'),
+    ('bid_price', 'f8'),
+    ('ask_price', 'f8'),
+    ('bid_usd_barrier', 'f8'),
+    ('ask_usd_barrier', 'f8'),
+])
 
 @njit
-def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
+def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma, order_qty):
     asset_no = 0
     tick_size = hbt.depth(asset_no).tick_size
-
     arrival_depth = np.full(700_000_000, np.nan, np.float64)
     mid_price_chg = np.full(700_000_000, np.nan, np.float64)
 
@@ -90,7 +100,6 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
 
     grid_num = 20
     max_position = 50 * order_qty
-
     # Checks every 100 milliseconds.
     while hbt.elapse(100_000_000) == 0:
         #--------------------------------------------------------
@@ -203,37 +212,50 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
 
                 ask_price += grid_interval
 
-        order_values = orders.values();
-        while order_values.has_next():
-            order = order_values.get()
-            # Cancels if a working order is not in the new grid.
-            if order.cancellable:
-                if (
-                    (order.side == BUY and order.order_id not in new_bid_orders)
-                    or (order.side == SELL and order.order_id not in new_ask_orders)
-                ):
-                    hbt.cancel(asset_no, order.order_id, False)
+        # order_values = orders.values();
+        # while order_values.has_next():
+        #     order = order_values.get()
+        #     # Cancels if a working order is not in the new grid.
+        #     if order.cancellable:
+        #         if (
+        #             (order.side == BUY and order.order_id not in new_bid_orders)
+        #             or (order.side == SELL and order.order_id not in new_ask_orders)
+        #         ):
+        #             hbt.cancel(asset_no, order.order_id, False)
 
-        for order_id, order_price in new_bid_orders.items():
-            # Posts a new buy order if there is no working order at the price on the new grid.
-            if order_id not in orders:
-                hbt.submit_buy_order(asset_no, order_id, order_price, order_qty, GTX, LIMIT, False)
+        # for order_id, order_price in new_bid_orders.items():
+        #     # Posts a new buy order if there is no working order at the price on the new grid.
+        #     if order_id not in orders:
+        #         hbt.submit_buy_order(asset_no, order_id, order_price, order_qty, GTX, LIMIT, False)
 
-        for order_id, order_price in new_ask_orders.items():
-            # Posts a new sell order if there is no working order at the price on the new grid.
-            if order_id not in orders:
-                hbt.submit_sell_order(asset_no, order_id, order_price, order_qty, GTX, LIMIT, False)
+        # for order_id, order_price in new_ask_orders.items():
+        #     # Posts a new sell order if there is no working order at the price on the new grid.
+        #     if order_id not in orders:
+        #         hbt.submit_sell_order(asset_no, order_id, order_price, order_qty, GTX, LIMIT, False)
 
         #--------------------------------------------------------
         # Records variables and stats for analysis.
-
+        out[t].cur_ts = hbt.current_timestamp
+        out[t].mid = mid_price_tick * tick_size
+        out[t].half_spread_tick = half_spread_tick
+        out[t].ap0 = best_ask_tick * tick_size
+        out[t].bp0 = best_bid_tick * tick_size
+        out[t].bid_price = bid_price
+        out[t].ask_price = ask_price # 
+        out[t].bid_usd_barrier = bid_usd_barrier
+        out[t].ask_usd_barrier = ask_usd_barrier
+        
+        t += 1
+        # Records the current state for stat calculation.
+        recorder.record(hbt)
+        
         t += 1
 
         if t >= len(arrival_depth) or t >= len(mid_price_chg):
             raise Exception
-
         # Records the current state for stat calculation.
         recorder.record(hbt)
+    return out[:t]
         
         
 
@@ -246,9 +268,9 @@ if __name__ == '__main__':
     # https://www.binance.com/en/support/announcement/binance-upgrades-usd%E2%93%A2-margined-futures-liquidity-provider-program-2023-04-04-01007356e6514df3811b0c80ab8c83bf
     asset_name = "ETHUSDT"
     begin_date =  "20240320"
-    end_date =  "20240604"
+    end_date =  "20240401"
     data_dir =  "/mnt/data/hftbacktest_data/data"
-    out_dir =  "report"
+    out_dir =  "stats/order_stat"
     start = datetime.strptime(begin_date, "%Y%m%d")
     prev_date = (start - timedelta(days=1)).strftime("%Y%m%d")
     end = datetime.strptime(end_date, "%Y%m%d")
@@ -281,14 +303,9 @@ if __name__ == '__main__':
     for gamma in gamma_list:
         order_qty = 0.001
         recorder = Recorder(1, 700_000_000)
+        out = np.zeros(700_000_000, out_dtype)
         hbt = ROIVectorMarketDepthBacktest([asset])
-        gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
+        out = gridtrading_glft_mm(hbt, recorder.recorder,out, gamma, order_qty)
         hbt.close()
-        t2 = time.time()
-        print(f"Elapsed time: {t2 - t1:.2f} seconds for the backtest.")
-        recorder.to_npz(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{begin_date}_{end_date}.npz')
-        stats = LinearAssetRecord(recorder.get(0)).stats()
-        print(stats.summary())
-        stats.plot()
-        plt.savefig(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{begin_date}_{end_date}.png')
-        
+        # save out to npz 
+        np.savez(f"{out_dir}/simple_glft_mm_{gamma}.npz", out=out)
