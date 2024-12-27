@@ -178,19 +178,22 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, gamma, ord
         ask_price = np.ceil(ask_price / grid_interval) * grid_interval
         # calc usd value before placing orders
         #! how to deal with invalid data
-        ask_usd_barrier = 0
-        bid_usd_barrier = 0
         
         if not np.isnan(bid_price) and not np.isnan(ask_price):
-            for tick_price in range(depth.best_ask_tick, ask_price_tick):
+            ask_usd_barrier = 0
+            bid_usd_barrier = 0
+            for tick_price in range(depth.best_ask_tick, ask_price_tick + 1):
                 qty = depth.ask_qty_at_tick(tick_price)
                 if qty > 0:
                     ask_usd_barrier += qty * tick_price * tick_size
             
-            for tick_price in range(depth.best_bid_tick, max(bid_price_tick,0),-1):
+            for tick_price in range(depth.best_bid_tick, max(bid_price_tick,0) - 1, -1):
                 qty = depth.bid_qty_at_tick(tick_price)
                 if qty > 0:
                     bid_usd_barrier += qty * tick_price * tick_size
+        else:
+            bid_usd_barrier = np.nan
+            ask_usd_barrier = np.nan
         #--------------------------------------------------------
         # Updates quotes.
 
@@ -302,7 +305,7 @@ if __name__ == '__main__':
     )
     print("Start backtest.")
     t1 = time.time()
-    gamma_list = [1, 5]
+    gamma_list = [0.5,1, 5]
     buffer_size = 700_000_000
     for gamma in gamma_list:
         order_qty = 0.001
