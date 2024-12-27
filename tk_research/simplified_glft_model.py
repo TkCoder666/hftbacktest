@@ -80,11 +80,11 @@ out_dtype = np.dtype([
 ])
 
 @njit
-def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma, order_qty):
+def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, gamma, order_qty):
     asset_no = 0
     tick_size = hbt.depth(asset_no).tick_size
-    arrival_depth = np.full(700_000_000, np.nan, np.float64)
-    mid_price_chg = np.full(700_000_000, np.nan, np.float64)
+    arrival_depth = np.full(buffer_size, np.nan, np.float64)
+    mid_price_chg = np.full(buffer_size, np.nan, np.float64)
 
     t = 0
     prev_mid_price_tick = np.nan
@@ -100,6 +100,7 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma
 
     grid_num = 20
     max_position = 50 * order_qty
+    out = np.zeros(buffer_size, out_dtype)
     # Checks every 100 milliseconds.
     while hbt.elapse(100_000_000) == 0:
         #--------------------------------------------------------
@@ -166,7 +167,8 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma
 
         bid_price_tick = min(np.round(reservation_price_tick - half_spread_tick), best_bid_tick)
         ask_price_tick = max(np.round(reservation_price_tick + half_spread_tick), best_ask_tick)
-
+        # make bid_price_tick from np.float64 to np.int64
+        
         bid_price = bid_price_tick * tick_size
         ask_price = ask_price_tick * tick_size
 
@@ -175,18 +177,20 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma
         bid_price = np.floor(bid_price / grid_interval) * grid_interval
         ask_price = np.ceil(ask_price / grid_interval) * grid_interval
         # calc usd value before placing orders
+        #! how to deal with invalid data
         ask_usd_barrier = 0
-        for tick_price in range(depth.best_ask_tick, ask_price_tick):
-            qty = depth.ask_qty_at_tick(tick_price)
-            if qty > 0:
-                ask_usd_barrier += qty * tick_price * tick_size
-        
         bid_usd_barrier = 0
-        for tick_price in range(depth.best_bid_tick, max(bid_price_tick,0),-1):
-            qty = depth.bid_qty_at_tick(tick_price)
-            if qty > 0:
-                bid_usd_barrier += qty * tick_price * tick_size
+        
+        if not np.isnan(bid_price) and not np.isnan(ask_price):
+            for tick_price in range(depth.best_ask_tick, ask_price_tick):
+                qty = depth.ask_qty_at_tick(tick_price)
+                if qty > 0:
+                    ask_usd_barrier += qty * tick_price * tick_size
             
+            for tick_price in range(depth.best_bid_tick, max(bid_price_tick,0),-1):
+                qty = depth.bid_qty_at_tick(tick_price)
+                if qty > 0:
+                    bid_usd_barrier += qty * tick_price * tick_size
         #--------------------------------------------------------
         # Updates quotes.
 
@@ -235,17 +239,16 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma
 
         #--------------------------------------------------------
         # Records variables and stats for analysis.
-        out[t].cur_ts = hbt.current_timestamp
-        out[t].mid = mid_price_tick * tick_size
-        out[t].half_spread_tick = half_spread_tick
-        out[t].ap0 = best_ask_tick * tick_size
-        out[t].bp0 = best_bid_tick * tick_size
-        out[t].bid_price = bid_price
-        out[t].ask_price = ask_price # 
-        out[t].bid_usd_barrier = bid_usd_barrier
-        out[t].ask_usd_barrier = ask_usd_barrier
+        out[t]['cur_ts'] = hbt.current_timestamp
+        out[t]['mid'] = mid_price_tick * tick_size
+        out[t]['half_spread_tick'] = half_spread_tick
+        out[t]['ap0'] = best_ask_tick * tick_size
+        out[t]['bp0'] = best_bid_tick * tick_size
+        out[t]['bid_price'] = bid_price
+        out[t]['ask_price'] = ask_price
+        out[t]['bid_usd_barrier'] = bid_usd_barrier
+        out[t]['ask_usd_barrier'] = ask_usd_barrier
         
-        t += 1
         # Records the current state for stat calculation.
         recorder.record(hbt)
         
@@ -262,7 +265,7 @@ def gridtrading_glft_mm(hbt : ROIVectorMarketDepthBacktest, recorder, out, gamma
 from hftbacktest.stats import LinearAssetRecord
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-
+import gc
 if __name__ == '__main__':
     # This backtest assumes market maker rebates.
     # https://www.binance.com/en/support/announcement/binance-upgrades-usd%E2%93%A2-margined-futures-liquidity-provider-program-2023-04-04-01007356e6514df3811b0c80ab8c83bf
@@ -299,13 +302,15 @@ if __name__ == '__main__':
     )
     print("Start backtest.")
     t1 = time.time()
-    gamma_list = [0.5, 1, 5]
+    gamma_list = [1, 5]
+    buffer_size = 700_000_000
     for gamma in gamma_list:
         order_qty = 0.001
-        recorder = Recorder(1, 700_000_000)
-        out = np.zeros(700_000_000, out_dtype)
+        recorder = Recorder(1, buffer_size)
         hbt = ROIVectorMarketDepthBacktest([asset])
-        out = gridtrading_glft_mm(hbt, recorder.recorder,out, gamma, order_qty)
+        out = gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
         hbt.close()
         # save out to npz 
         np.savez(f"{out_dir}/simple_glft_mm_{gamma}.npz", out=out)
+        del out
+        gc.collect()
