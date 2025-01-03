@@ -73,8 +73,8 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
     asset_no = 0
     tick_size = hbt.depth(asset_no).tick_size
 
-    arrival_depth = np.full(700_000_000, np.nan, np.float64)
-    mid_price_chg = np.full(700_000_000, np.nan, np.float64)
+    arrival_depth = np.full(buffer_size, np.nan, np.float64)
+    mid_price_chg = np.full(buffer_size, np.nan, np.float64)
 
     t = 0
     prev_mid_price_tick = np.nan
@@ -93,9 +93,7 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
     
     last_lvl1_bid = None
     last_lvl1_ask = None
-    reset_bps = 10
     reset_cnt = 0
-
     # Checks every 100 milliseconds.
     while hbt.elapse(100_000_000) == 0:
         #--------------------------------------------------------
@@ -222,7 +220,7 @@ def gridtrading_glft_mm(hbt, recorder, gamma, order_qty):
 
         # Records the current state for stat calculation.
         recorder.record(hbt)
-        
+    return reset_cnt
         
 
 from hftbacktest.stats import LinearAssetRecord
@@ -263,19 +261,22 @@ if __name__ == '__main__':
             .last_trades_capacity(10000)
     )
     print("Start backtest.")
-    t1 = time.time()
     gamma = 5
-    order_qty_list = [0.1,1,10]
-    for order_qty in order_qty_list:
-        recorder = Recorder(1, 700_000_000)
+    order_qty = 1
+    reset_bps_list = [1,5,10,25,50]
+    for reset_bps in reset_bps_list:
+        buffer_size = 500_000_000
+        recorder = Recorder(1, buffer_size)
         hbt = ROIVectorMarketDepthBacktest([asset])
-        gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
+        t1 = time.time()
+        reset_cnt = gridtrading_glft_mm(hbt, recorder.recorder, gamma, order_qty)
+        avg_reset_cnt = reset_cnt / len(date_list)
         hbt.close()
         t2 = time.time()
         print(f"Elapsed time: {t2 - t1:.2f} seconds for the backtest.")
-        recorder.to_npz(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{order_qty}_{begin_date}_{end_date}.npz')
+        recorder.to_npz(f'stats/reset_expt/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{order_qty}_{begin_date}_{end_date}_{reset_bps}_{avg_reset_cnt}.npz')
         stats = LinearAssetRecord(recorder.get(0)).stats()
         print(stats.summary())
         stats.plot()
-        plt.savefig(f'stats/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{order_qty}_{begin_date}_{end_date}.png')
+        plt.savefig(f'stats/reset_expt/gridtrading_simple_glft_mm1_{asset_name}_{gamma}_{order_qty}_{begin_date}_{end_date}_{reset_bps}_{avg_reset_cnt}.png')
         
